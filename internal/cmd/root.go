@@ -69,6 +69,23 @@ func generateFunc(cmd *cobra.Command, args []string) {
 			panic(fmt.Errorf("error generating pkgs: %v", err))
 		}
 
+		// For workspace builds, generate per-module vendor package lists
+		if generate.HasGoWork(directory) && len(pkgs) > 0 {
+			moduleNames := make([]string, len(pkgs))
+			for i, pkg := range pkgs {
+				moduleNames[i] = pkg.GoPackagePath
+			}
+			vendorPkgs, err := generate.GenerateVendorPackages(directory, moduleNames)
+			if err != nil {
+				panic(fmt.Errorf("error generating vendor packages: %v", err))
+			}
+			for _, pkg := range pkgs {
+				if vp, ok := vendorPkgs[pkg.GoPackagePath]; ok {
+					pkg.VendorPackages = vp
+				}
+			}
+		}
+
 		var goPackagePath string
 		var subPackages []string
 

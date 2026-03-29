@@ -57,7 +57,7 @@ let
     removePrefix
     ;
 
-  parseGoMod = import ./parser.nix;
+  inherit (import ./parser.nix) parseGoMod parseGoWork;
 
   # Internal only build-time attributes
   internal =
@@ -109,6 +109,61 @@ let
       impureEnvVars = fetchers.proxyImpureEnvVars ++ [ "GOPROXY" ];
     };
 
+  # Generate vendor/modules.txt content for workspace builds.
+  # Format: ## workspace header, workspace module entries, external module entries with package lists.
+  mkWorkspaceModulesTxt =
+    pwd: goWork: modulesStruct:
+    let
+      # Parse all workspace modules' go.mod files
+      workspaceModules = map (
+        usePath:
+        let
+          moduleGoMod = parseGoMod (readFile "${toString pwd}/${usePath}/go.mod");
+        in
+        {
+          path = usePath;
+          modulePath = moduleGoMod.module;
+          goVersion = moduleGoMod.go;
+          requires = builtins.attrNames (moduleGoMod.require or { });
+        }
+      ) goWork.use;
+
+      # Collect all module paths that are required by any workspace module
+      allRequired = builtins.concatLists (map (m: m.requires) workspaceModules);
+
+      # Only list workspace modules that are dependencies of other workspace modules
+      dependedModules = builtins.filter (m: builtins.elem m.modulePath allRequired) workspaceModules;
+
+      workspaceEntries = map (m: ''
+        echo '# ${m.modulePath} v0.0.0 => ${m.path}' >> vendor/modules.txt
+        echo '## explicit; go ${m.goVersion}' >> vendor/modules.txt
+      '') dependedModules;
+
+      # External module entries: # module version + ## explicit; go X.Y + package list
+      externalEntries = mapAttrsToList (
+        name: meta:
+        let
+          vendorPkgs = meta.vendorPackages or [ ];
+          pkgLines = concatStringsSep "\n" (map (p: "echo '${p}' >> vendor/modules.txt") vendorPkgs);
+        in
+        if vendorPkgs != [ ] then
+          ''
+            echo '# ${name} ${meta.version}' >> vendor/modules.txt
+            echo '## explicit; go ${meta.goVersion or "1.21"}' >> vendor/modules.txt
+            ${pkgLines}
+          ''
+        else
+          ""
+      ) (modulesStruct.mod or { });
+    in
+    [
+      ''
+        echo '## workspace' > vendor/modules.txt
+      ''
+    ]
+    ++ workspaceEntries
+    ++ externalEntries;
+
   mkVendorEnv =
     {
       go,
@@ -116,6 +171,7 @@ let
       defaultPackage ? "",
       goMod,
       pwd,
+      goWork ? null,
     }:
     let
       localReplaceCommands =
@@ -128,7 +184,17 @@ let
             '')) localReplaceAttrs
           );
         in
-        if goMod != null then commands else [ ];
+        # In workspace mode, workspace module symlinks are not needed in vendor/
+        # (Go resolves them from the source tree)
+        if goWork != null then
+          [ ]
+        else if goMod != null then
+          commands
+        else
+          [ ];
+
+      workspaceVendorCommands =
+        if goWork != null then mkWorkspaceModulesTxt pwd goWork modulesStruct else [ ];
 
       sources = mapAttrs (
         goPackagePath: meta:
@@ -163,6 +229,7 @@ let
 
         ${internal.symlink}
         ${concatStringsSep "\n" localReplaceCommands}
+        ${concatStringsSep "\n" workspaceVendorCommands}
 
         mv vendor $out
       '');
@@ -174,6 +241,7 @@ let
       goMod,
       vendorEnv,
       depFilesPath,
+      isWorkspace ? false,
       # Build environment parameters (should match buildGoApplication)
       nativeBuildInputs ? [ ],
       buildInputs ? [ ],
@@ -216,15 +284,24 @@ let
 
       # Change the working directory in prePatch so GoConfigHook sets up
       # vendor/ at the right location
-      prePatch = ''
-        # Create a working directory (Go ignores go.mod in /build)
-        mkdir -p source
-        cd source
+      prePatch =
+        if isWorkspace then
+          ''
+            # Reconstruct workspace structure for cache compilation
+            cp -r ${depFilesPath} source
+            chmod -R +w source
+            cd source
+          ''
+        else
+          ''
+            # Create a working directory (Go ignores go.mod in /build)
+            mkdir -p source
+            cd source
 
-        # Copy go.mod and go.sum from filtered source
-        cp ${depFilesPath}/go.mod ./go.mod
-        cp ${depFilesPath}/go.sum ./go.sum 2>/dev/null || touch go.sum
-      '';
+            # Copy go.mod and go.sum from filtered source
+            cp ${depFilesPath}/go.mod ./go.mod
+            cp ${depFilesPath}/go.sum ./go.sum 2>/dev/null || touch go.sum
+          '';
 
       configurePhase = ''
         # Set up GOCACHE directory (will compress to $out later)
@@ -415,11 +492,28 @@ let
     let
       modulesStruct = if modules == null then { } else fromTOML (readFile modules);
 
-      goModPath = "${toString pwd}/go.mod";
+      # Detect workspace: check for go.work at pwd
+      goWorkPath = "${toString pwd}/go.work";
+      hasWorkspace = pwd != null && pathExists goWorkPath;
+      goWork = if hasWorkspace then parseGoWork (readFile goWorkPath) else null;
 
+      # For workspaces, go.mod may not exist at pwd; use go.work's Go version
+      goModPath = "${toString pwd}/go.mod";
       goMod = if pwd != null && pathExists goModPath then parseGoMod (readFile goModPath) else null;
 
-      go = selectGo attrs goMod;
+      # For Go version selection, prefer go.mod, fall back to go.work
+      goModForVersion =
+        if goMod != null then
+          goMod
+        else if goWork != null then
+          {
+            go = goWork.go;
+            module = "workspace";
+          }
+        else
+          null;
+
+      go = selectGo attrs goModForVersion;
 
       defaultPackage = modulesStruct.goPackagePath or "";
 
@@ -429,10 +523,11 @@ let
             inherit
               defaultPackage
               go
-              goMod
+              goWork
               modulesStruct
               pwd
               ;
+            goMod = if goMod != null then goMod else { replace = { }; };
           }
         else
           null;
@@ -450,16 +545,44 @@ let
 
       depFilesPath =
         if (!disableGoCache && modulesStruct != { } && depFilesSrc != null) then
-          lib.cleanSourceWith {
-            src = depFilesSrc;
-            filter =
-              path: type:
-              let
-                baseName = baseNameOf path;
-              in
-              baseName == "go.mod" || baseName == "go.sum" || baseName == "gomod2nix.toml";
-            name = "go-dep-files";
-          }
+          if hasWorkspace then
+            # For workspaces, include go.work and all module go.mod/go.sum files
+            lib.cleanSourceWith {
+              src = pwd;
+              filter =
+                path: type:
+                let
+                  baseName = baseNameOf path;
+                  relPath = removePrefix ((toString pwd) + "/") (toString path);
+                in
+                baseName == "go.work"
+                || baseName == "go.mod"
+                || baseName == "go.sum"
+                || baseName == "gomod2nix.toml"
+                # Allow intermediate directories for workspace modules
+                || (
+                  type == "directory"
+                  && builtins.any (
+                    u:
+                    let
+                      cleanU = removePrefix "./" u;
+                    in
+                    lib.hasPrefix relPath cleanU || lib.hasPrefix cleanU relPath
+                  ) goWork.use
+                );
+              name = "go-workspace-dep-files";
+            }
+          else
+            lib.cleanSourceWith {
+              src = depFilesSrc;
+              filter =
+                path: type:
+                let
+                  baseName = baseNameOf path;
+                in
+                baseName == "go.mod" || baseName == "go.sum" || baseName == "gomod2nix.toml";
+              name = "go-dep-files";
+            }
         else
           null;
 
@@ -475,6 +598,7 @@ let
               ldflags
               allowGoReference
               ;
+            isWorkspace = hasWorkspace;
             CGO_ENABLED = attrs.CGO_ENABLED or go.CGO_ENABLED;
             goMod = if goMod != null then goMod else { replace = { }; };
           }
@@ -515,6 +639,8 @@ let
         goCacheDir = if cacheEnv != null then cacheEnv else "";
         inherit tags ldflags;
         modRoot = attrs.modRoot or "";
+
+        preBuild = attrs.preBuild or "";
 
         doCheck = attrs.doCheck or true;
 

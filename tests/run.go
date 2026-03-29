@@ -68,7 +68,9 @@ func runTest(rootDir string, testDir string) error {
 		}
 
 	} else {
-		if _, err := os.Stat(filepath.Join(testDir, "go.mod")); err == nil {
+		_, hasGoMod := os.Stat(filepath.Join(testDir, "go.mod"))
+		_, hasGoWork := os.Stat(filepath.Join(testDir, "go.work"))
+		if hasGoMod == nil || hasGoWork == nil {
 			err := runProcess(prefix, nil, cmdPath, "--dir", testDir, "--outdir", testDir)
 			if err != nil {
 				return err

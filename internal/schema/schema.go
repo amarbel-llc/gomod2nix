@@ -11,10 +11,12 @@ import (
 const SchemaVersion = 3
 
 type Package struct {
-	GoPackagePath string `toml:"-"`
-	Version       string `toml:"version"`
-	Hash          string `toml:"hash"`
-	ReplacedPath  string `toml:"replaced,omitempty"`
+	GoPackagePath  string   `toml:"-"`
+	Version        string   `toml:"version"`
+	Hash           string   `toml:"hash"`
+	ReplacedPath   string   `toml:"replaced,omitempty"`
+	GoVersion      string   `toml:"goVersion,omitempty"`
+	VendorPackages []string `toml:"vendorPackages,multiline,omitempty"`
 }
 
 type Output struct {

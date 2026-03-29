@@ -1,9 +1,9 @@
-# Parse go.mod in Nix
-# Returns a Nix structure with the contents of the go.mod passed in
-# in normalised form.
+# Parse go.mod and go.work in Nix
+# Returns Nix structures with the contents in normalised form.
 
 let
   inherit (builtins)
+    attrNames
     elemAt
     mapAttrs
     split
@@ -13,6 +13,7 @@ let
     typeOf
     hasAttr
     length
+    readFile
     ;
 
   # Strip lines with comments & other junk
@@ -32,7 +33,7 @@ let
 
   # Parse lines into a structure
   parseLines =
-    lines:
+    defaults: lines:
     (foldl'
       (
         acc: l:
@@ -109,11 +110,7 @@ let
         # Default foldl' state
         inDirective = null;
         # The actual return data we're interested in (default empty structure)
-        data = {
-          require = { };
-          replace = { };
-          exclude = { };
-        };
+        data = defaults;
       }
       lines
     ).data;
@@ -182,11 +179,47 @@ let
 
   splitString = sep: s: filter (t: t != [ ]) (split sep s);
 
+  goModDefaults = {
+    require = { };
+    replace = { };
+    exclude = { };
+  };
+
+  goWorkDefaults = {
+    use = { };
+    replace = { };
+  };
+
+  parseGoMod =
+    contents:
+    foldl' (acc: f: f acc) (splitString "\n" contents) [
+      stripLines
+      (parseLines goModDefaults)
+      normaliseDirectives
+      parseReplace
+    ];
+
+  # Parse go.work and return structure with:
+  #   go: version string
+  #   use: list of relative paths
+  #   replace: attrset (same format as go.mod replace)
+  parseGoWork =
+    contents:
+    let
+      raw = foldl' (acc: f: f acc) (splitString "\n" contents) [
+        stripLines
+        (parseLines goWorkDefaults)
+        normaliseDirectives
+        parseReplace
+      ];
+    in
+    raw
+    // {
+      # Convert use attrset { "./moduleA" = ""; } to list [ "./moduleA" ]
+      use = attrNames (raw.use or { });
+    };
+
 in
-contents:
-foldl' (acc: f: f acc) (splitString "\n" contents) [
-  stripLines
-  parseLines
-  normaliseDirectives
-  parseReplace
-]
+{
+  inherit parseGoMod parseGoWork;
+}
