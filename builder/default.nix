@@ -139,21 +139,22 @@ let
         echo '## explicit; go ${m.goVersion}' >> vendor/modules.txt
       '') dependedModules;
 
-      # External module entries: # module version + ## explicit; go X.Y + package list
+      # External module entries: # module version + ## explicit; go X.Y + package list.
+      # Every module in any workspace go.mod's require block must get an explicit
+      # marker, even if no workspace source imports any of its packages (e.g. indirect
+      # deps whose only importers are build-tag-gated, like mousetrap via cobra on linux).
+      # Otherwise `go build -mod=vendor` rejects the vendor tree as inconsistent.
       externalEntries = mapAttrsToList (
         name: meta:
         let
           vendorPkgs = meta.vendorPackages or [ ];
           pkgLines = concatStringsSep "\n" (map (p: "echo '${p}' >> vendor/modules.txt") vendorPkgs);
         in
-        if vendorPkgs != [ ] then
-          ''
-            echo '# ${name} ${meta.version}' >> vendor/modules.txt
-            echo '## explicit; go ${meta.goVersion or "1.21"}' >> vendor/modules.txt
-            ${pkgLines}
-          ''
-        else
-          ""
+        ''
+          echo '# ${name} ${meta.version}' >> vendor/modules.txt
+          echo '## explicit; go ${meta.goVersion or "1.21"}' >> vendor/modules.txt
+          ${pkgLines}
+        ''
       ) (modulesStruct.mod or { });
     in
     [
