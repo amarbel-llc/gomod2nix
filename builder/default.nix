@@ -486,6 +486,13 @@ let
       passthru ? { },
       tags ? [ ],
       ldflags ? [ ],
+      commit ?
+        if src ? rev then
+          src.rev
+        else if src ? shortRev then
+          src.shortRev
+        else
+          "unknown",
       disableGoCache ? false,
 
       ...
@@ -608,6 +615,23 @@ let
 
       pname = attrs.pname or baseNameOf defaultPackage;
 
+      effectiveVersion =
+        if attrs ? version then
+          attrs.version
+        else if defaultPackage != "" then
+          stripVersion (modulesStruct.mod.${defaultPackage}).version
+        else
+          "dev";
+
+      versionLdflags = [
+        "-X main.version=${effectiveVersion}"
+        "-X main.commit=${commit}"
+      ];
+
+      # Only used by the final build. Passing these to mkGoCacheEnv would
+      # invalidate the cache hash on every commit without changing contents.
+      effectiveLdflags = versionLdflags ++ ldflags;
+
     in
     stdenv.mkDerivation (
       optionalAttrs (defaultPackage != "") {
@@ -638,7 +662,8 @@ let
 
         goVendorDir = if vendorEnv != null then vendorEnv else "";
         goCacheDir = if cacheEnv != null then cacheEnv else "";
-        inherit tags ldflags;
+        inherit tags;
+        ldflags = effectiveLdflags;
         modRoot = attrs.modRoot or "";
 
         preBuild = attrs.preBuild or "";

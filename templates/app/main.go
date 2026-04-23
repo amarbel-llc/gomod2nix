@@ -4,6 +4,11 @@ import (
 	"fmt"
 )
 
+var (
+	version = "dev"
+	commit  = "unknown"
+)
+
 func main() {
-	fmt.Println("Hello flake")
+	fmt.Printf("Hello flake %s (%s)\n", version, commit)
 }

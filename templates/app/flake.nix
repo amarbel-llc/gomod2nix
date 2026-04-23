@@ -62,6 +62,7 @@
         };
         packages.default = callPackage ./. {
           inherit (gomod2nix.legacyPackages.${system}) buildGoApplication;
+          commit = self.shortRev or self.dirtyShortRev or "unknown";
         };
         devShells.default = callPackage ./shell.nix {
           inherit (gomod2nix.legacyPackages.${system}) mkGoEnv gomod2nix;

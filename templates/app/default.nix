@@ -11,6 +11,7 @@
     }
   ),
   buildGoApplication ? pkgs.buildGoApplication,
+  commit ? "unknown",
 }:
 
 buildGoApplication {
@@ -19,4 +20,5 @@ buildGoApplication {
   pwd = ./.;
   src = ./.;
   modules = ./gomod2nix.toml;
+  inherit commit;
 }
