@@ -460,6 +460,9 @@ let
 
           export GOPATH="$out"
 
+          mkdir -p $out/etc/profile.d
+          cp ${./hooks/go-sync-wrap.sh} $out/etc/profile.d/gomod2nix-wrap.sh
+
         ''
         + optionalString (pathExists toolsGo) ''
           mkdir source
