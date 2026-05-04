@@ -107,18 +107,33 @@ func DiscoverFlakeTargets(directory string) ([]Target, error) {
 // --json` and returns the Targets implied by system keys under
 // packages.* and legacyPackages.*. Split out from DiscoverFlakeTargets
 // for unit testability.
+//
+// Only the categories we actually consume are inner-decoded. Other
+// top-level outputs (apps, devShells, lib, templates, formatter, ...)
+// can legitimately be non-object on some nix builds, so the top level
+// is decoded as raw messages and a malformed packages/legacyPackages
+// shape is skipped with a debug log rather than failing discovery.
 func discoverFlakeTargetsFromJSON(data []byte) ([]Target, error) {
-	var doc map[string]map[string]json.RawMessage
-	if err := json.Unmarshal(data, &doc); err != nil {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil {
 		return nil, fmt.Errorf("parsing `nix flake show` JSON: %w", err)
 	}
 
 	systems := make(map[string]bool)
 	for _, category := range []string{"packages", "legacyPackages"} {
-		if entries, ok := doc[category]; ok {
-			for system := range entries {
-				systems[system] = true
-			}
+		raw, ok := top[category]
+		if !ok {
+			continue
+		}
+		var entries map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &entries); err != nil {
+			log.WithError(err).WithField("category", category).Debug(
+				"skipping malformed flake category during target discovery",
+			)
+			continue
+		}
+		for system := range entries {
+			systems[system] = true
 		}
 	}
 

@@ -183,3 +183,43 @@ func TestDiscoverFlakeTargetsFromJSON_empty(t *testing.T) {
 		t.Fatalf("expected empty targets, got %+v", got)
 	}
 }
+
+func TestDiscoverFlakeTargetsFromJSON_heterogeneousTopLevel(t *testing.T) {
+	// Regression for #8: some `nix flake show --json` invocations emit
+	// non-object values at the top level for outputs whose schema isn't
+	// fully evaluated (numbers, strings, nulls). Discovery must only
+	// fail on outright unparseable JSON, not on irrelevant-but-shaped
+	// siblings of `packages` / `legacyPackages`.
+	const fixture = `{
+	  "packages": {"x86_64-linux": {"default": {"type": "derivation"}}},
+	  "weirdField": 42,
+	  "lib": "unevaluated",
+	  "nullThing": null
+	}`
+	got, err := discoverFlakeTargetsFromJSON([]byte(fixture))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []Target{{GOOS: "linux", GOARCH: "amd64"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestDiscoverFlakeTargetsFromJSON_malformedCategorySkipped(t *testing.T) {
+	// If `packages` itself isn't a system→attrs object — e.g. a buggy
+	// nix emits an array — discovery should skip that category and
+	// fall through to legacyPackages, not panic.
+	const fixture = `{
+	  "packages": [1, 2, 3],
+	  "legacyPackages": {"aarch64-darwin": {}}
+	}`
+	got, err := discoverFlakeTargetsFromJSON([]byte(fixture))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []Target{{GOOS: "darwin", GOARCH: "arm64"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}
