@@ -327,7 +327,13 @@ func workspaceModulePaths(directory string) ([]string, error) {
 
 // GenerateVendorPackages returns a map from module path to the list of packages
 // imported from that module. Used to generate vendor/modules.txt for workspaces.
-func GenerateVendorPackages(directory string, moduleNames []string) (map[string][]string, error) {
+//
+// When targets is non-empty, `go list -deps` is run once per target with the
+// matching GOOS/GOARCH and the per-module package lists are unioned. This
+// keeps vendorPackages platform-independent: regenerating on any host in
+// the target set produces the same output. When targets is empty, the
+// host's GOOS/GOARCH is used (legacy behavior).
+func GenerateVendorPackages(directory string, moduleNames []string, targets []Target) (map[string][]string, error) {
 	log.Info("Generating vendor package lists")
 
 	// In workspace mode, list all packages across all workspace modules
@@ -350,16 +356,6 @@ func GenerateVendorPackages(directory string, moduleNames []string) (map[string]
 		listArgs = append(listArgs, "./...")
 	}
 
-	cmd := exec.Command("go", listArgs...)
-	cmd.Dir = directory
-	stdout, err := cmd.Output()
-	if err != nil {
-		if exiterr, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("failed to run 'go list -deps': %s\n%s", exiterr, exiterr.Stderr)
-		}
-		return nil, fmt.Errorf("failed to run 'go list -deps': %w", err)
-	}
-
 	// Sort module names by length descending for longest-prefix match
 	sortedModules := make([]string, len(moduleNames))
 	copy(sortedModules, moduleNames)
@@ -370,21 +366,52 @@ func GenerateVendorPackages(directory string, moduleNames []string) (map[string]
 	result := make(map[string][]string)
 	seen := make(map[string]bool)
 
-	for _, line := range strings.Split(string(stdout), "\n") {
-		pkg := strings.TrimSpace(line)
-		if pkg == "" {
-			continue
+	runOne := func(t *Target) error {
+		cmd := exec.Command("go", listArgs...)
+		cmd.Dir = directory
+		ctx := "host"
+		if t != nil {
+			cmd.Env = append(os.Environ(), "GOOS="+t.GOOS, "GOARCH="+t.GOARCH)
+			ctx = t.String()
+			log.WithField("target", ctx).Info("Listing dependencies")
 		}
-		if seen[pkg] {
-			continue
+		stdout, err := cmd.Output()
+		if err != nil {
+			if exiterr, ok := err.(*exec.ExitError); ok {
+				return fmt.Errorf("failed to run 'go list -deps' for target %s: %s\n%s", ctx, exiterr, exiterr.Stderr)
+			}
+			return fmt.Errorf("failed to run 'go list -deps' for target %s: %w", ctx, err)
 		}
-		seen[pkg] = true
 
-		// Find which module this package belongs to (longest prefix match)
-		for _, mod := range sortedModules {
-			if pkg == mod || strings.HasPrefix(pkg, mod+"/") {
-				result[mod] = append(result[mod], pkg)
-				break
+		for _, line := range strings.Split(string(stdout), "\n") {
+			pkg := strings.TrimSpace(line)
+			if pkg == "" {
+				continue
+			}
+			if seen[pkg] {
+				continue
+			}
+			seen[pkg] = true
+
+			// Find which module this package belongs to (longest prefix match)
+			for _, mod := range sortedModules {
+				if pkg == mod || strings.HasPrefix(pkg, mod+"/") {
+					result[mod] = append(result[mod], pkg)
+					break
+				}
+			}
+		}
+		return nil
+	}
+
+	if len(targets) == 0 {
+		if err := runOne(nil); err != nil {
+			return nil, err
+		}
+	} else {
+		for i := range targets {
+			if err := runOne(&targets[i]); err != nil {
+				return nil, err
 			}
 		}
 	}

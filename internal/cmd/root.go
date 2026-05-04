@@ -15,11 +15,37 @@ import (
 const directoryDefault = "./"
 
 var (
-	flagDirectory string
-	flagOutDir    string
-	maxJobs       int
-	flagWithDeps  bool
+	flagDirectory      string
+	flagOutDir         string
+	maxJobs            int
+	flagWithDeps       bool
+	flagTargets        []string
+	flagNoFlakeTargets bool
 )
+
+// resolveTargets decides which (GOOS, GOARCH) targets to feed into
+// GenerateVendorPackages. Policy:
+//  1. Explicit --target wins, even if a flake.nix exists.
+//  2. Otherwise, if --no-flake-targets is set or no flake.nix is
+//     adjacent to the workspace, return nil (host-only legacy).
+//  3. Otherwise, run `nix flake show --json` against the project flake.
+//     Failures bubble up (fail-loudly) so the user can pick an escape
+//     hatch instead of silently producing a host-shaped lockfile.
+func resolveTargets(directory string, flags []string, noFlake bool) ([]generate.Target, error) {
+	if len(flags) > 0 {
+		return generate.ParseTargetFlags(flags)
+	}
+	if noFlake || !generate.HasFlake(directory) {
+		return nil, nil
+	}
+	targets, err := generate.DiscoverFlakeTargets(directory)
+	if err != nil {
+		return nil, fmt.Errorf("auto-discovering targets from flake.nix failed: %w\n"+
+			"Pass --target GOOS/GOARCH (repeatable) to set targets explicitly, "+
+			"or --no-flake-targets to fall back to host-only generation", err)
+	}
+	return targets, nil
+}
 
 func generateFunc(cmd *cobra.Command, args []string) {
 	directory := flagDirectory
@@ -75,7 +101,11 @@ func generateFunc(cmd *cobra.Command, args []string) {
 			for i, pkg := range pkgs {
 				moduleNames[i] = pkg.GoPackagePath
 			}
-			vendorPkgs, err := generate.GenerateVendorPackages(directory, moduleNames)
+			targets, err := resolveTargets(directory, flagTargets, flagNoFlakeTargets)
+			if err != nil {
+				panic(err)
+			}
+			vendorPkgs, err := generate.GenerateVendorPackages(directory, moduleNames, targets)
 			if err != nil {
 				panic(fmt.Errorf("error generating vendor packages: %v", err))
 			}
@@ -143,6 +173,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&flagOutDir, "outdir", "", "Output directory (defaults to project directory)")
 	rootCmd.PersistentFlags().IntVar(&maxJobs, "jobs", 10, "Max number of concurrent jobs")
 	rootCmd.PersistentFlags().BoolVar(&flagWithDeps, "with-deps", false, "Include dependencies in gomod2nix.toml for build cache priming")
+	rootCmd.PersistentFlags().StringSliceVar(&flagTargets, "target", nil, "Target platform GOOS/GOARCH for vendorPackages generation (repeatable, e.g. linux/amd64,darwin/arm64). Overrides flake auto-discovery.")
+	rootCmd.PersistentFlags().BoolVar(&flagNoFlakeTargets, "no-flake-targets", false, "Disable auto-discovery of targets from flake.nix; use the host's GOOS/GOARCH instead.")
 
 	rootCmd.AddCommand(generateCmd)
 	rootCmd.AddCommand(importCmd)
