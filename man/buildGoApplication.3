@@ -1,0 +1,199 @@
+.Dd May 4, 2026
+.Dt BUILDGOAPPLICATION 3
+.Os
+.Sh NAME
+.Nm buildGoApplication
+.Nd build a Go application from source and a gomod2nix lockfile
+.Sh SYNOPSIS
+.Nm
+.Brq Ar attrs
+.Sh DESCRIPTION
+.Nm
+is a Nix builder function that compiles a Go application using a
+.Pa gomod2nix.toml
+lockfile to vendor module sources.
+It is exported from
+.Pa overlay.nix
+into
+.Va pkgs
+and can also be obtained via
+.Pa flake.nix
+as
+.Va legacyPackages.${system}.buildGoApplication .
+.Pp
+The function takes a single attribute set and forwards every
+unrecognized attribute to nixpkgs's
+.Sy stdenv.mkDerivation ,
+so any standard derivation attribute
+.Pq Sy patches , Sy postInstall , ...
+also works.
+.Sh ARGUMENTS
+.Bl -tag -width "allowGoReference"
+.It Sy modules
+Path to
+.Pa gomod2nix.toml .
+Default:
+.Pa pwd + "/gomod2nix.toml" .
+.It Sy src
+Path to sources.
+Default:
+.Sy pwd .
+.It Sy pwd
+Path to working directory.
+Default:
+.Dv null .
+.It Sy go
+The Go compiler to use.
+Auto-selected from the
+.Sy go
+directive of
+.Pa go.mod
+when omitted.
+.It Sy subPackages
+Build only these specific sub-packages.
+.It Sy allowGoReference
+Allow references to the Go compiler in the output closure.
+Default:
+.Dv false .
+.It Sy tags
+List of build tags forwarded to the Go compiler.
+Default:
+.Ql [ ] .
+.It Sy ldflags
+List of
+.Sy -ldflags
+forwarded to the Go compiler.
+Default:
+.Ql [ ] .
+Auto-injected version and commit ldflags are prepended; caller-supplied
+entries here take precedence because Go honors the last
+.Sy -X
+for a given symbol.
+See
+.Sx VERSION INJECTION
+below.
+.It Sy commit
+Git commit SHA baked into the binary via
+.Sy -X main.commit=<commit> .
+Default:
+.Ql src.rev or src.shortRev or "unknown" .
+See
+.Sx VERSION INJECTION .
+.It Sy nativeBuildInputs
+Additional packages to include in the build derivation.
+Default:
+.Ql [ ] .
+.El
+.Pp
+All other attributes are passed verbatim to
+.Sy stdenv.mkDerivation .
+.Sh VERSION INJECTION
+.Nm
+automatically prepends two entries to
+.Sy ldflags :
+.Bd -literal -offset indent
+-X main.version=<version>
+-X main.commit=<commit>
+.Ed
+.Pp
+For these values to surface inside the binary, declare matching
+.Sy var
+blocks in the
+.Sy main
+package:
+.Bd -literal -offset indent
+var (
+    version = "dev"
+    commit  = "unknown"
+)
+.Ed
+.Pp
+The defaults make it obvious when a binary was built outside of Nix.
+.Ss Default resolution
+.Bl -tag -width "version"
+.It Sy version
+Resolves from the
+.Sy version
+argument passed to
+.Nm .
+If absent, falls back to the version recorded in
+.Pa gomod2nix.toml
+when building from a
+.Sy goPackagePath ,
+otherwise
+.Ql dev .
+.It Sy commit
+Resolves from
+.Sy src.rev
+or
+.Sy src.shortRev
+when
+.Sy src
+is a flake input or fetched source, otherwise
+.Ql unknown .
+.El
+.Ss The cleanSourceWith pitfall
+.Sy lib.cleanSourceWith
+strips git metadata from
+.Sy src ,
+so
+.Sy src.rev
+disappears.
+In that case the default
+.Sy commit
+will be
+.Ql unknown
+\(em pass
+.Sy commit
+explicitly:
+.Bd -literal -offset indent
+buildGoApplication {
+  src = lib.cleanSourceWith {
+    src = self;
+    filter = path: type:
+      lib.hasSuffix ".go" path || baseNameOf path == "go.mod";
+  };
+  commit = self.shortRev or self.dirtyShortRev or "unknown";
+  # ...
+}
+.Ed
+.Sh EXAMPLES
+A minimal flake-based application:
+.Bd -literal -offset indent
+buildGoApplication {
+  pname = "myapp";
+  version = "0.1";
+  src = ./.;
+  modules = ./gomod2nix.toml;
+}
+.Ed
+.Pp
+Cross-compilation works through the standard nixpkgs channels: set
+.Sy GOOS
+and
+.Sy GOARCH
+in
+.Sy env
+or use a cross-compiling
+.Va pkgs
+attribute.
+The build hooks distinguish
+.Sy nativeBuildInputs Pq host
+from
+.Sy buildInputs Pq target
+following nixpkgs conventions.
+.Sh SEE ALSO
+.Xr gomod2nix-getting-started 7
+.Pp
+Markdown reference:
+.Pa docs/nix-reference.md
+in the gomod2nix source tree (covers
+.Sy mkGoEnv
+as well).
+.Sh HISTORY
+.Nm
+originated in
+.Lk https://github.com/nix-community/gomod2nix .
+This man page was added by the
+.Lk https://github.com/amarbel-llc/gomod2nix
+fork.

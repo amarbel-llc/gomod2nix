@@ -53,6 +53,7 @@ buildGoApplication {
         --zsh <($out/bin/gomod2nix completion zsh)
     ''
     + ''
+      installManPage ${./man/buildGoApplication.3} ${./man/gomod2nix-getting-started.7}
       wrapProgram $out/bin/gomod2nix --prefix PATH : ${lib.makeBinPath [ go ]}
     '';
 

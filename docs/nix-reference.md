@@ -1,5 +1,10 @@
 # Gomod2nix Nix API
 
+> **Authoritative reference:** `man buildGoApplication` (section 3) is
+> the canonical API doc once gomod2nix is installed via Nix. This
+> markdown copy mirrors that page for browsing on GitHub; if the two
+> drift, the man page wins.
+
 ## Public functions
 
 ### buildGoApplication

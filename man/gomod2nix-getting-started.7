@@ -1,0 +1,145 @@
+.Dd May 4, 2026
+.Dt GOMOD2NIX-GETTING-STARTED 7
+.Os
+.Sh NAME
+.Nm gomod2nix-getting-started
+.Nd tutorial for converting a Go module project to a Nix-buildable application
+.Sh DESCRIPTION
+This page walks through the steps required to use
+.Sy gomod2nix
+to build a Go application reproducibly with Nix.
+There are two supported entry points: the
+.Sy niv
+workflow for projects that pin sources via JSON, and a Nix-Flakes
+workflow for projects that already use a
+.Pa flake.nix .
+.Sh INSTALLATION
+.Ss Using niv
+First initialize niv and pin gomod2nix:
+.Bd -literal -offset indent
+$ niv init --latest
+$ niv add nix-community/gomod2nix
+.Ed
+.Pp
+Create a
+.Pa shell.nix
+to bootstrap the development environment:
+.Bd -literal -offset indent
+{ pkgs ? (
+    let
+      sources = import ./nix/sources.nix;
+    in
+    import sources.nixpkgs {
+      overlays = [
+        (import "${sources.gomod2nix}/overlay.nix")
+      ];
+    }
+  )
+}:
+let
+  goEnv = pkgs.mkGoEnv { pwd = ./.; };
+in
+pkgs.mkShell {
+  packages = [
+    goEnv
+    pkgs.gomod2nix
+    pkgs.niv
+  ];
+}
+.Ed
+.Pp
+And a
+.Pa default.nix
+that builds the application:
+.Bd -literal -offset indent
+{ pkgs ? (
+    let
+      sources = import ./nix/sources.nix;
+    in
+    import sources.nixpkgs {
+      overlays = [
+        (import "${sources.gomod2nix}/overlay.nix")
+      ];
+    }
+  )
+}:
+pkgs.buildGoApplication {
+  pname = "myapp";
+  version = "0.1";
+  pwd = ./.;
+  src = ./.;
+  modules = ./gomod2nix.toml;
+}
+.Ed
+.Ss Using Nix Flakes
+The quickest path is the bundled flake template:
+.Bd -literal -offset indent
+$ nix flake init -t github:nix-community/gomod2nix#app
+.Ed
+.Pp
+For container images, use the container template instead:
+.Bd -literal -offset indent
+$ nix flake init -t github:nix-community/gomod2nix#container
+.Ed
+.Sh BASIC USAGE
+After entering the development shell, generate
+.Pa gomod2nix.toml
+from
+.Pa go.mod
+and
+.Pa go.sum :
+.Bd -literal -offset indent
+$ gomod2nix generate
+.Ed
+.Pp
+To pre-compile dependencies into the build cache for faster subsequent
+builds, add
+.Fl -with-deps :
+.Bd -literal -offset indent
+$ gomod2nix generate --with-deps
+.Ed
+.Pp
+.Fl -with-deps
+records the imported package set in
+.Pa gomod2nix.toml
+so the builder can pre-compile them once instead of recompiling on every
+build.
+This matters most for projects with many dependencies.
+.Pp
+To skip downloading module sources into the Nix store and reuse the
+local Go cache instead:
+.Bd -literal -offset indent
+$ gomod2nix import
+.Ed
+.Sh CROSS-PLATFORM LOCKFILES
+The
+.Sy vendorPackages
+list inside
+.Pa gomod2nix.toml
+is the union of
+.Sy go list -deps
+results across every target platform the project builds for.
+Auto-discovery reads
+.Pa flake.nix
+via
+.Sy nix flake show --json --all-systems
+and unions system keys under
+.Sy packages.*
+and
+.Sy legacyPackages.* .
+Override the discovered set with
+.Fl -target Ar GOOS/GOARCH
+.Pq repeatable :
+.Bd -literal -offset indent
+$ gomod2nix --target linux/amd64 --target darwin/arm64
+.Ed
+.Pp
+Or opt out entirely with
+.Fl -no-flake-targets
+to fall back to host-only generation.
+.Sh SEE ALSO
+.Xr buildGoApplication 3
+.Sh HISTORY
+This man page was added by the
+.Lk https://github.com/amarbel-llc/gomod2nix
+fork of nix-community/gomod2nix.
