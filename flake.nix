@@ -2,6 +2,12 @@
   description = "Convert go.mod/go.sum to Nix packages";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/master";
+  # nixpkgs-master is the SHA-pinned anchor that eng's update-nix-
+  # repos recipe cascades. Unused in outputs — the actual build still
+  # consumes `nixpkgs` above (which tracks NixOS/nixpkgs/master directly,
+  # like the amarbel-llc/nixpkgs fork does). This input just lets the
+  # cascade see and update a pinned ref.
+  inputs.nixpkgs-master.url = "github:NixOS/nixpkgs/d233902339c02a9c334e7e593de68855ad26c4cb";
   inputs.flake-utils.url = "github:numtide/flake-utils";
 
   outputs =
