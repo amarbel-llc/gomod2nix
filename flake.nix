@@ -15,6 +15,7 @@
       self,
       nixpkgs,
       flake-utils,
+      ...
     }:
     {
       overlays.default = import ./overlay.nix;
