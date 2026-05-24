@@ -3,7 +3,7 @@
     let
       inherit (builtins) fetchTree fromJSON readFile;
     in
-    import (fetchTree (fromJSON (readFile ./flake.lock)).nodes.nixpkgs.locked) {
+    import (fetchTree (fromJSON (readFile ./flake.lock)).nodes."nixpkgs-master".locked) {
       overlays = [
         (import ./overlay.nix)
       ];
