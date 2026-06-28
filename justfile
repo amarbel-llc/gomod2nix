@@ -59,20 +59,30 @@ test: test-go test-nix
 test-go:
     nix develop --command go test ./...
 
-# Full Nix integration suite — builds every tests/* project with nix-build (heavy; needs network).
+# Fast Nix integration suite — the merge gate; heavy/quarantined fixtures excluded (see tests/run.go).
 [group("post-build")]
 test-nix: build-go
     nix develop --command go run tests/run.go
 
-# Run one Nix integration test by name (e.g. `just test-nix-one mkgoenv`); drives the CI matrix.
+# Heavy Nix integration fixtures (minikube, cross) — CI-only lane, not in `default`. Slow; needs network.
+[group("post-build")]
+test-nix-heavy: build-go
+    nix develop --command bash -euo pipefail -c 'go run tests/run.go run $(go run tests/run.go list-heavy)'
+
+# Run one Nix integration test by name (e.g. `just test-nix-one mkgoenv`); drives the CI matrices.
 [group("post-build")]
 test-nix-one name: build-go
     nix develop --command go run tests/run.go run {{ name }}
 
-# List the available Nix integration tests, one per line (the CI matrix is built from this).
+# List the fast Nix integration tests, one per line (the fast CI matrix is built from this).
 [group("inspection")]
 list-tests:
     nix develop --command go run tests/run.go list
+
+# List the heavy CI-only integration tests, one per line (the heavy CI matrix is built from this).
+[group("inspection")]
+list-tests-heavy:
+    nix develop --command go run tests/run.go list-heavy
 
 [group("codemod")]
 codemod-fmt: codemod-fmt-treefmt

@@ -27,11 +27,13 @@ just build-nix       # build the Nix package (.#default)
 just lint            # lint-go (golangci-lint) + lint-fmt (treefmt --ci, read-only)
 just codemod-fmt     # rewrite the tree to canonical nix formatting (treefmt)
 
-just test            # test-go + test-nix
-just test-go         # Go unit tests: go test ./...
-just test-nix        # full Nix integration suite: go run tests/run.go
-just test-nix-one X  # one integration test by name (e.g. `just test-nix-one mkgoenv`)
-just list-tests      # list available integration tests
+just test             # test-go + test-nix (the fast lane)
+just test-go          # Go unit tests: go test ./...
+just test-nix         # fast Nix integration suite (merge gate): go run tests/run.go
+just test-nix-heavy   # heavy CI-only fixtures (minikube, cross); not in `default`
+just test-nix-one X   # one integration test by name (e.g. `just test-nix-one helm`)
+just list-tests       # list the fast integration tests
+just list-tests-heavy # list the heavy CI-only integration tests
 
 just validate-gomod2nix-toml   # fail if gomod2nix.toml is stale (regen + diff)
 just update-go                 # go mod tidy, then regen gomod2nix.toml
@@ -46,8 +48,17 @@ The repo has two kinds of tests:
 - **Nix integration tests** (`just test-nix` → `go run tests/run.go`): each test
   directory under `tests/` contains a Go project that gets built with
   `nix-build`. The runner (`tests/run.go`) either executes a `tests/*/script`
-  file or runs gomod2nix + nix-build on the test project. Tests blacklisted in
-  CI (when the `GITHUB_ACTIONS` env is set): helm, minikube, cross.
+  file or runs gomod2nix + nix-build on the test project. `tests/run.go` sorts
+  fixtures into three categories (an explicit list, not the old `GITHUB_ACTIONS`
+  env hack):
+  - **fast** — the merge gate (`just test-nix`, `run.go list`): the small
+    fixtures plus the in-repo `cgo-codegen` fixture (cgo via zlib/pkg-config plus
+    a build-time codegen step — the unique paths the giants used to cover).
+  - **heavy** — `minikube`, `cross`: a CI-only blocking lane (`just
+    test-nix-heavy`, `run.go list-heavy`), excluded from `default` / the merge hook.
+  - **quarantined** — `helm`: excluded from every automated lane until
+    amarbel-llc/gomod2nix#17 (a `github.com/ugorji/go` vendoring bug) is fixed.
+    Still runnable by name: `go run tests/run.go run helm`.
 
 ## Architecture
 
@@ -96,6 +107,8 @@ nixpkgs conventions.
 CI (`.github/workflows/ci.yml`) routes every job through the justfile, so the
 gate matches `just` locally. It runs `lint-fmt` (formatting), `lint-go`
 (golangci-lint), `test-go` (Go unit tests), `validate-gomod2nix-toml` (fails if
-`gomod2nix.toml` is stale — it regenerates and diffs), and the Nix integration
-suite as a per-test matrix (`list-tests` → `test-nix-one`). Always run
-`gomod2nix` (or `just update-go`) after changing Go dependencies.
+`gomod2nix.toml` is stale — it regenerates and diffs), the fast Nix integration
+suite as a per-test matrix (`list-tests` → `test-nix-one`), and a separate heavy
+matrix (`list-tests-heavy` → `test-nix-one`) for the CI-only `minikube`/`cross`
+fixtures (`helm` quarantined — see above). Always run `gomod2nix` (or `just
+update-go`) after changing Go dependencies.

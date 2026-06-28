@@ -85,3 +85,40 @@ jobs:
           extra_nix_config: experimental-features = nix-command flakes
       - name: "Run test: ${{ matrix.attr }}"
         run: nix-shell -p just --run 'just test-nix-one ${{ matrix.attr }}'
+
+  # Heavy CI-only lane: the large real-world fixtures (minikube, cross) that are
+  # excluded from the fast merge gate. helm is quarantined in tests/run.go until
+  # amarbel-llc/gomod2nix#17 is fixed, so it never appears here.
+  list-tests-heavy:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: experimental-features = nix-command flakes
+      - id: set-matrix
+        run: |
+          set -euo pipefail
+          matrix="$(nix-shell -p just --run 'just list-tests-heavy' | jq --raw-input --slurp -rcM '{attr: split("\n")[:-1], os: ["ubuntu-latest"]}')"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  test-nix-heavy:
+    needs: list-tests-heavy
+    runs-on: ${{ matrix.os }}
+    # These fixtures fetch + build large real-world projects; give each its own
+    # runner and a generous budget. fail-fast: false so one doesn't cancel the other.
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.list-tests-heavy.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: experimental-features = nix-command flakes
+      - name: "Run heavy test: ${{ matrix.attr }}"
+        run: nix-shell -p just --run 'just test-nix-one ${{ matrix.attr }}'

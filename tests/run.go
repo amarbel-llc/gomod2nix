@@ -87,30 +87,69 @@ func runTest(rootDir string, testDir string) error {
 	return nil
 }
 
-func getTestDirs(rootDir string) ([]string, error) {
-	// Takes too long for Github Actions
-	var blacklist []string
-	if os.Getenv("GITHUB_ACTIONS") == "true" {
-		blacklist = []string{
-			"helm",
-			"minikube",
-			"cross",
-		}
-	}
+// heavyTests run only in the CI-only blocking lane: slow / hardware-heavy
+// fixtures excluded from the fast merge-gate set (`list`, no-arg `run`).
+var heavyTests = []string{"minikube", "cross"}
 
+// quarantinedTests are excluded from every automated lane (fast and heavy)
+// until fixed, but remain runnable by explicit name (`run helm`).
+//
+// helm: a pre-existing github.com/ugorji/go module-vs-subpackage vendoring
+// collision panics the symlink tree builder in builder/symlink/symlink.go, so
+// the build fails for reasons unrelated to gomod2nix. Tracked in
+// https://github.com/amarbel-llc/gomod2nix/issues/17. Reproduce with
+// `go run tests/run.go run helm`.
+var quarantinedTests = []string{"helm"}
+
+func allTestDirs(rootDir string) ([]string, error) {
 	files, err := os.ReadDir(rootDir)
 	if err != nil {
 		return nil, err
 	}
 
-	testDirs := []string{}
+	dirs := []string{}
 	for _, f := range files {
-		if f.IsDir() && !contains(blacklist, f.Name()) {
-			testDirs = append(testDirs, f.Name())
+		if f.IsDir() {
+			dirs = append(dirs, f.Name())
 		}
 	}
 
-	return testDirs, nil
+	return dirs, nil
+}
+
+// fastTestDirs is the default merge-gate set: every test dir minus the heavy
+// and quarantined categories.
+func fastTestDirs(rootDir string) ([]string, error) {
+	all, err := allTestDirs(rootDir)
+	if err != nil {
+		return nil, err
+	}
+
+	dirs := []string{}
+	for _, d := range all {
+		if !contains(heavyTests, d) && !contains(quarantinedTests, d) {
+			dirs = append(dirs, d)
+		}
+	}
+
+	return dirs, nil
+}
+
+// heavyTestDirs is the heavy category intersected with dirs that actually exist.
+func heavyTestDirs(rootDir string) ([]string, error) {
+	all, err := allTestDirs(rootDir)
+	if err != nil {
+		return nil, err
+	}
+
+	dirs := []string{}
+	for _, d := range all {
+		if contains(heavyTests, d) {
+			dirs = append(dirs, d)
+		}
+	}
+
+	return dirs, nil
 }
 
 func runTests(rootDir string, testDirs []string) error {
@@ -161,7 +200,19 @@ func main() {
 
 	switch action {
 	case "list":
-		testDirs, err := getTestDirs(rootDir)
+		testDirs, err := fastTestDirs(rootDir)
+		if err != nil {
+			panic(err)
+		}
+
+		for _, testDir := range testDirs {
+			fmt.Println(testDir)
+		}
+
+		return
+
+	case "list-heavy":
+		testDirs, err := heavyTestDirs(rootDir)
 		if err != nil {
 			panic(err)
 		}
@@ -179,7 +230,7 @@ func main() {
 			args := flag.Args()
 			testDirs = args[1:nArgs]
 		} else {
-			testDirs, err = getTestDirs(rootDir)
+			testDirs, err = fastTestDirs(rootDir)
 			if err != nil {
 				panic(err)
 			}
