@@ -8,12 +8,17 @@
 default: validate lint build test
 
 [group("pre-build")]
-validate: validate-devshell
+validate: validate-devshell validate-gomod2nix-toml
 
 # Build the devShell so vendor-env / mkGoEnv breakage that the prod build can mask fails here.
 [group("pre-build")]
 validate-devshell:
     nix build --no-link .#devShells.{{ arch() }}-linux.default
+
+# Fail if gomod2nix.toml is stale — regenerate it and diff against the committed copy (CI gate).
+[group("pre-build")]
+validate-gomod2nix-toml: build-gomod2nix
+    git diff --exit-code gomod2nix.toml
 
 [group("pre-build")]
 lint: lint-go lint-fmt
@@ -58,6 +63,16 @@ test-go:
 [group("post-build")]
 test-nix: build-go
     nix develop --command go run tests/run.go
+
+# Run one Nix integration test by name (e.g. `just test-nix-one mkgoenv`); drives the CI matrix.
+[group("post-build")]
+test-nix-one name: build-go
+    nix develop --command go run tests/run.go run {{ name }}
+
+# List the available Nix integration tests, one per line (the CI matrix is built from this).
+[group("inspection")]
+list-tests:
+    nix develop --command go run tests/run.go list
 
 [group("codemod")]
 codemod-fmt: codemod-fmt-treefmt
