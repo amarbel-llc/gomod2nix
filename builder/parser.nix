@@ -96,6 +96,23 @@ let
                   }
                 )
 
+              # Single-line require/exclude must merge into the same attrset
+              # the block form accumulates, otherwise a lone `require x v1`
+              # followed by a `require ( ... )` block builds `string // attrset`
+              # and aborts (issue #15: one-direct-dep modules emit exactly that
+              # — a single direct require line plus an indirect block).
+              else if directive == "require" || directive == "exclude" then
+                (
+                  let
+                    m = match "([^ ]+) (.+)" rest;
+                  in
+                  {
+                    ${directive} = acc.data.${directive} // {
+                      ${elemAt m 0} = elemAt m 1;
+                    };
+                  }
+                )
+
               # The default operation is to just assign the value
               else
                 {
